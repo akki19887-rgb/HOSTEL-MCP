@@ -909,6 +909,222 @@ def list_photos(business_id: str) -> dict:
 
 
 # ============================================================================
+#  4b.  GitHub - website ki file seedha yahin se chadhana
+# ============================================================================
+#
+# Ankit har badlaav ke liye haath se file chadhate the - din me kai baar. Ye tool
+# wahi kaam yahin se kar dete hain. GitHub par commit hote hi Firebase apne aap
+# deploy kar deta hai.
+#
+# Teen taale yahan bhi:
+#   1. Bina GITHUB_TOKEN ke ye tool kaam hi nahi karte.
+#   2. Sirf GITHUB_REPOS me likhe repo chhue ja sakte hain, aur koi nahi.
+#   3. Badalne wala tool pehle dekhta hai ki purana hissa file me THEEK EK BAAR hai.
+#      Na mila, ya do baar mila - to kuch nahi hota aur wajah batayi jati hai.
+#
+# Har badlaav auditLog me darj hota hai, actorRole 'mcp' ke saath.
+
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+_GH_DEFAULT_REPOS = ("akki19887-rgb/hostel-app-frontend,"
+                     "akki19887-rgb/HOSTEL-BACKEND,"
+                     "akki19887-rgb/HOSTEL-MCP")
+GITHUB_REPOS = tuple(r.strip() for r in
+                     os.environ.get("GITHUB_REPOS", _GH_DEFAULT_REPOS).split(",") if r.strip())
+_GH_MAX_TEXT = 300000     # ek baar me itne akshar se badi file nahi bhejni
+_GH_API = "https://api.github.com"
+
+
+def _gh_ready():
+    if not GITHUB_TOKEN:
+        raise PermissionError(
+            "GitHub juda nahi hai. Render me is service par GITHUB_TOKEN daaliye - "
+            "GitHub ka fine-grained token, sirf in repo par, sirf 'Contents: read and write'."
+        )
+
+
+def _gh_repo(repo):
+    repo = (repo or "").strip().strip("/")
+    if repo not in GITHUB_REPOS:
+        raise PermissionError(
+            "Is repo ko chhune ki ijazat nahi: %s. Manzoor repo: %s"
+            % (repo, ", ".join(GITHUB_REPOS)))
+    return repo
+
+
+def _gh_path(path):
+    # Rasta repo ke andar se hi hona chahiye. "/" se shuru hone wala rasta chupchaap
+    # theek kar dena galat hai - usse galti se repo me "etc/passwd" jaisi file ban
+    # sakti hai. Isliye mana kar dete hain, taaki galti saamne aaye.
+    p = (path or "").strip()
+    if (not p or p.startswith("/") or ".." in p or len(p) > 300
+            or p.startswith(".") or "\\" in p):
+        raise ValueError("Ye rasta theek nahi: %r (repo ke andar ka rasta dijiye)" % path)
+    return p
+
+
+def _gh_call(method, url, **kw):
+    import requests
+    headers = {
+        "Authorization": "Bearer " + GITHUB_TOKEN,
+        "Accept": kw.pop("accept", "application/vnd.github+json"),
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "HostelOM-MCP",
+    }
+    r = requests.request(method, url, headers=headers, timeout=30, **kw)
+    return r
+
+
+def _gh_read(repo, path):
+    """File ka poora text aur uska sha. Bada file bhi chal jata hai (raw ke zariye)."""
+    url = "%s/repos/%s/contents/%s" % (_GH_API, repo, quote(path))
+    meta = _gh_call("GET", url)
+    if meta.status_code == 404:
+        return None, None
+    if meta.status_code >= 300:
+        raise RuntimeError("GitHub: %s %s" % (meta.status_code, meta.text[:300]))
+    sha = (meta.json() or {}).get("sha")
+
+    raw = _gh_call("GET", url, accept="application/vnd.github.raw")
+    if raw.status_code >= 300:
+        raise RuntimeError("GitHub (raw): %s %s" % (raw.status_code, raw.text[:300]))
+    return raw.content.decode("utf-8", "replace"), sha
+
+
+def _gh_write(repo, path, text, sha, message):
+    import base64 as _b64
+    url = "%s/repos/%s/contents/%s" % (_GH_API, repo, quote(path))
+    body = {
+        "message": message[:200],
+        "content": _b64.b64encode(text.encode("utf-8")).decode("ascii"),
+    }
+    if sha:
+        body["sha"] = sha
+    r = _gh_call("PUT", url, json=body)
+    if r.status_code >= 300:
+        raise RuntimeError("GitHub ne mana kiya: %s %s" % (r.status_code, r.text[:300]))
+    d = r.json() or {}
+    return (d.get("commit") or {}).get("sha", "")
+
+
+@mcp.tool()
+def github_status() -> dict:
+    """GitHub juda hai ya nahi, aur kaun se repo chhue ja sakte hain."""
+    return {
+        "connected": bool(GITHUB_TOKEN),
+        "allowed_repos": list(GITHUB_REPOS),
+        "note": ("Taiyar hai." if GITHUB_TOKEN else
+                 "GITHUB_TOKEN set nahi hai - Render me daaliye, tab ye tool chalenge."),
+    }
+
+
+@mcp.tool()
+def github_find(repo: str, path: str, needle: str, around: int = 100) -> dict:
+    """File me koi hissa dhoondhiye - kitni baar hai aur aas-paas kya likha hai.
+
+    Badalne se pehle hamesha yahi chalaiye. Agar ye 1 se alag ginti de, to
+    github_patch mana kar dega - aur wo theek hi karega."""
+    _gh_ready()
+    repo, path = _gh_repo(repo), _gh_path(path)
+    text, _ = _gh_read(repo, path)
+    if text is None:
+        return {"error": "File nahi mili: %s/%s" % (repo, path)}
+    if not needle:
+        return {"error": "Kya dhoondhna hai wo to bataiye."}
+
+    hits, i = [], 0
+    while len(hits) < 5:
+        j = text.find(needle, i)
+        if j < 0:
+            break
+        a = max(0, j - max(0, min(around, 400)))
+        b = min(len(text), j + len(needle) + max(0, min(around, 400)))
+        hits.append({"at": j, "context": text[a:b]})
+        i = j + 1
+    total = text.count(needle)
+    return {"repo": repo, "path": path, "file_chars": len(text),
+            "found": total, "shown": len(hits), "hits": hits,
+            "safe_to_patch": total == 1}
+
+
+@mcp.tool()
+def github_read(repo: str, path: str, start: int = 0, length: int = 4000) -> dict:
+    """File ka ek tukda padhiye. Poori 900 KB nahi - jitna maanga utna."""
+    _gh_ready()
+    repo, path = _gh_repo(repo), _gh_path(path)
+    text, _ = _gh_read(repo, path)
+    if text is None:
+        return {"error": "File nahi mili: %s/%s" % (repo, path)}
+    start = max(0, int(start))
+    length = max(1, min(int(length), 20000))
+    return {"repo": repo, "path": path, "file_chars": len(text),
+            "start": start, "text": text[start:start + length]}
+
+
+@mcp.tool()
+def github_patch(repo: str, path: str, find: str, replace: str, message: str) -> dict:
+    """File ka ek hissa badal kar commit kar dijiye.
+
+    'find' file me THEEK EK BAAR hona chahiye. Na mila ya do baar mila to kuch nahi
+    hota - ginti bata di jati hai. Isse andha replace kabhi nahi hota.
+    Commit hote hi Firebase apne aap deploy kar deta hai."""
+    _gh_ready()
+    repo, path = _gh_repo(repo), _gh_path(path)
+    if not find:
+        return {"error": "'find' khali nahi ho sakta - warna ye andha replace ban jayega."}
+
+    text, sha = _gh_read(repo, path)
+    if text is None:
+        return {"error": "File nahi mili: %s/%s" % (repo, path)}
+
+    n = text.count(find)
+    if n != 1:
+        return {"error": "Badla nahi gaya. Ye hissa file me %d baar mila, 1 baar hona chahiye tha."
+                         % n,
+                "found": n,
+                "hint": ("github_find se dekhiye aur aas-paas ka text jod kar ise anokha banaiye."
+                         if n > 1 else
+                         "Shayad file badal chuki hai. github_read se aaj ka roop dekh lijiye.")}
+
+    new_text = text.replace(find, replace, 1)
+    if new_text == text:
+        return {"ok": True, "changed": False, "note": "Naya aur purana ek hi hai - kuch nahi badla."}
+    if len(new_text) > _GH_MAX_TEXT * 4:
+        return {"error": "File bahut badi ho gayi, ruk gaya."}
+
+    commit = _gh_write(repo, path, new_text, sha, message or "Update %s" % path)
+    _audit("github_patch", "%s/%s" % (repo, path),
+           "-%d +%d chars, commit %s" % (len(find), len(replace), commit[:8]))
+    return {"ok": True, "changed": True, "repo": repo, "path": path,
+            "commit": commit, "chars_before": len(text), "chars_after": len(new_text),
+            "note": "Commit ho gaya. Firebase 1-2 minute me deploy kar dega."}
+
+
+@mcp.tool()
+def github_put_text(repo: str, path: str, text: str, message: str) -> dict:
+    """Chhoti text file poori chadha dijiye (robots.txt, sitemap.xml jaisi).
+
+    File pehle se ho to badal di jati hai. Badi file (jaise index.html) ke liye
+    github_patch use kijiye - ye 3 lakh akshar tak hi leta hai."""
+    _gh_ready()
+    repo, path = _gh_repo(repo), _gh_path(path)
+    if text is None:
+        return {"error": "text khali nahi ho sakta."}
+    if len(text) > _GH_MAX_TEXT:
+        return {"error": "Ye file bahut badi hai (%d akshar). github_patch use kijiye." % len(text)}
+
+    old, sha = _gh_read(repo, path)
+    if old == text:
+        return {"ok": True, "changed": False, "note": "File pehle se bilkul aisi hi hai."}
+
+    commit = _gh_write(repo, path, text, sha, message or "Add %s" % path)
+    _audit("github_put_text", "%s/%s" % (repo, path),
+           "%s, %d chars, commit %s" % ("badli" if sha else "nayi", len(text), commit[:8]))
+    return {"ok": True, "changed": True, "created": sha is None, "repo": repo, "path": path,
+            "commit": commit, "chars": len(text),
+            "note": "Commit ho gaya. Firebase 1-2 minute me deploy kar dega."}
+
+
+# ============================================================================
 #  5.  HTTP app + the IP lock
 # ============================================================================
 
