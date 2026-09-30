@@ -1102,8 +1102,15 @@ def github_patch(repo: str, path: str, find: str, replace: str, message: str) ->
     new_text = text.replace(find, replace, 1)
     if new_text == text:
         return {"ok": True, "changed": False, "note": "Naya aur purana ek hi hai - kuch nahi badla."}
-    if len(new_text) > _GH_MAX_TEXT * 4:
-        return {"error": "File bahut badi ho gayi, ruk gaya."}
+    if len(new_text) > _GH_MAX_PATCH:
+        # Pehle yahan sirf "File bahut badi ho gayi, ruk gaya." likha tha - na
+        # ginti, na hadd. Isse lagta tha ki rukawat GitHub ki hai, jabki wo
+        # yahin is file me likhi hui thi.
+        return {"error": "File is hadd se badi ho jati (%d akshar, hadd %d). "
+                         "Ye hadd mcp_server.py ke _GH_MAX_PATCH me likhi hai - "
+                         "GitHub ki nahi."
+                         % (len(new_text), _GH_MAX_PATCH),
+                "chars_would_be": len(new_text), "limit": _GH_MAX_PATCH}
 
     commit = _gh_write(repo, path, new_text, sha, message or "Update %s" % path)
     _audit("github_patch", "%s/%s" % (repo, path),
