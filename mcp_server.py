@@ -930,7 +930,21 @@ _GH_DEFAULT_REPOS = ("akki19887-rgb/hostel-app-frontend,"
                      "akki19887-rgb/HOSTEL-MCP")
 GITHUB_REPOS = tuple(r.strip() for r in
                      os.environ.get("GITHUB_REPOS", _GH_DEFAULT_REPOS).split(",") if r.strip())
-_GH_MAX_TEXT = 300000     # ek baar me itne akshar se badi file nahi bhejni
+# github_put_text (poori file bhejna) ke liye hadd. Poori file request ke body me
+# jati hai, isliye yahan chhota rakhna theek hai.
+_GH_MAX_TEXT = 300000
+
+# github_patch ke liye ALAG hadd.
+#
+# Pehle yahan `_GH_MAX_TEXT * 4` likha tha, yaani 12,00,000. Wo number bina soche
+# rakha gaya tha. Uska anjaam ye hua ki index.html 11,99,081 akshar par pahunchte
+# hi har naya sudhaar rukne laga - aur wajah GitHub nahi, ye line thi.
+#
+# GitHub khud 100 MB tak leta hai (50 MB par chetavni deta hai). patch me poori
+# nayi file bhejni padti hai, isliye koi hadd honi to chahiye - par wo asli
+# rukawat ke aas-paas honi chahiye, us number par nahi jo maine anuman se likh
+# diya tha.
+_GH_MAX_PATCH = 4000000   # 40 lakh akshar (~4 MB) - GitHub API isse aaram se leta hai
 _GH_API = "https://api.github.com"
 
 
