@@ -1135,6 +1135,68 @@ def github_patch(repo: str, path: str, find: str, replace: str, message: str) ->
 
 
 @mcp.tool()
+def github_cut(repo: str, path: str, start_find: str, end_find: str,
+               replace: str, message: str) -> dict:
+    """Do nishaano ke BEECH ka poora hissa badal dijiye - dono nishaan sameth.
+
+    YE KAB CHAHIYE
+    --------------
+    github_patch ko poora purana text 'find' me chahiye. Par kabhi-kabhi
+    hatana hi ek bahut bada tukda hota hai - jaise index.html me 156 KB ka
+    base64 me likha hua naksha-pin. Utna text dobara likhna na sambhav hai
+    na bharosemand.
+
+    Yahan sirf DO CHHOTE nishaan chahiye: hisse ki shuruaat aur uska ant.
+    Beech ka sab kuch - chahe lakh akshar ho - 'replace' se badal jata hai.
+
+    SURAKSHA WAHI HAI JO github_patch ME HAI
+    ----------------------------------------
+      - dono nishaan file me THEEK EK BAAR hone chahiye
+      - ant ka nishaan shuruaat ke BAAD hona chahiye
+    Inme se kuch bhi galat ho to kuch nahi hota, sirf wajah batayi jati hai.
+    Andha replace kabhi nahi hota.
+    """
+    _gh_ready()
+    repo, path = _gh_repo(repo), _gh_path(path)
+    if not start_find or not end_find:
+        return {"error": "Dono nishaan chahiye - koi bhi khali nahi ho sakta."}
+
+    text, sha = _gh_read(repo, path)
+    if text is None:
+        return {"error": "File nahi mili: %s/%s" % (repo, path)}
+
+    a, b = text.count(start_find), text.count(end_find)
+    if a != 1 or b != 1:
+        return {"error": "Kuch nahi badla. Shuruaat ka nishaan %d baar mila, "
+                         "ant ka %d baar. Dono theek ek baar hone chahiye." % (a, b),
+                "start_found": a, "end_found": b,
+                "hint": "github_find se dekhiye aur aas-paas ka text jod kar anokha banaiye."}
+
+    i = text.index(start_find)
+    j = text.index(end_find)
+    if j < i:
+        return {"error": "Ant ka nishaan shuruaat se PEHLE hai - kram ulta hai."}
+    j += len(end_find)
+
+    new_text = text[:i] + replace + text[j:]
+    if new_text == text:
+        return {"ok": True, "changed": False, "note": "Naya aur purana ek hi hai - kuch nahi badla."}
+    if len(new_text) > _GH_MAX_PATCH:
+        return {"error": "File is hadd se badi ho jati (%d akshar, hadd %d). "
+                         "Ye hadd mcp_server.py ke _GH_MAX_PATCH me likhi hai - "
+                         "GitHub ki nahi." % (len(new_text), _GH_MAX_PATCH),
+                "chars_would_be": len(new_text), "limit": _GH_MAX_PATCH}
+
+    commit = _gh_write(repo, path, new_text, sha, message or "Update %s" % path)
+    _audit("github_cut", "%s/%s" % (repo, path),
+           "-%d +%d chars, commit %s" % (j - i, len(replace), commit[:8]))
+    return {"ok": True, "changed": True, "repo": repo, "path": path, "commit": commit,
+            "chars_before": len(text), "chars_after": len(new_text),
+            "cut_chars": j - i,
+            "note": "Commit ho gaya. Firebase 1-2 minute me deploy kar dega."}
+
+
+@mcp.tool()
 def github_put_text(repo: str, path: str, text: str, message: str) -> dict:
     """Chhoti text file poori chadha dijiye (robots.txt, sitemap.xml jaisi).
 
