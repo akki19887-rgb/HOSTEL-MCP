@@ -966,23 +966,16 @@ def _gh_repo(repo):
 
 
 # Chhupi hui (dot se shuru hone wali) file par likhna mana hai - un me repo ke
-# apne auzaar rehte hain. Ek ko chhod kar.
+# apne auzaar rehte hain.
 #
-# KYON EK CHHOOT:
-#     .github/workflows/firebase-deploy.yml
-#
-# index.html ki Tailwind CSS deploy ke waqt banni chahiye, haath se nahi. Haath
-# se banayi hui CSS tab tak theek hai jab tak index.html me koi nayi class na
-# jude - uske baad wo hissa bina design ke dikhne lagta hai, chup-chaap, bina
-# kisi error ke. Wo build step sirf isi file me likha ja sakta hai.
-#
-# Doosra rasta tha ki 51 KB ki bani-banayi CSS har baar yahan se bheji jaye.
-# Wo bhejna bharosemand nahi: 51 hazaar akshar me ek akshar idhar-udhar hua to
-# CSS toot jayegi aur pata deploy ke baad chalega.
-#
-# Chhoot sirf is EK poore naam ki hai - koi folder nahi, koi pattern nahi.
-# Baaki har chhupi file par rok waisi hi hai.
-_GH_CHHUT = (".github/workflows/firebase-deploy.yml",)
+# Ek baar maine ".github/workflows/firebase-deploy.yml" ke liye chhoot di thi,
+# taaki Tailwind ki CSS deploy ke waqt ban sake. Wo chhoot bekaar nikli: GitHub
+# khud mana kar deta hai -
+#     403 "Resource not accessible by personal access token"
+# kyunki workflow file par likhne ke liye token me alag "Workflows" ki ijazat
+# chahiye, jo is token me nahi hai. To rok wapas - jo chhoot kaam hi nahi
+# karti, wo sirf khatra hai.
+_GH_CHHUT = ()
 
 
 def _gh_path(path):
@@ -993,8 +986,7 @@ def _gh_path(path):
     if not p or p.startswith("/") or ".." in p or len(p) > 300 or "\\" in p:
         raise ValueError("Ye rasta theek nahi: %r (repo ke andar ka rasta dijiye)" % path)
     if p.startswith(".") and p not in _GH_CHHUT:
-        raise ValueError("Chhupi hui file par likhna mana hai: %r (chhoot sirf: %s)"
-                         % (path, ", ".join(_GH_CHHUT)))
+        raise ValueError("Chhupi hui file par likhna mana hai: %r" % path)
     return p
 
 
